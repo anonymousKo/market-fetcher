@@ -373,7 +373,9 @@ export default function App() {
       initialViews[ticker] = 'table';
     }
 
-    logs.push(`全部标的抓取完成，数据已生成 CSV 并在下方展示。`);
+    logs.push(
+      `全部标的抓取完成，数据已生成并在下方展示，可点击下载或复制 CSV。`
+    );
 
     setFetchResponse({
       success: true,
