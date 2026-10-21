@@ -1,0 +1,6 @@
+{
+  "name": "market-kline-fetcher",
+  "description": "每日行情 K 线数据抓取与汇总工具，支持标的代码与周期参数配置，自动生成与导出 CSV 文件。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
