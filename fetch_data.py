@@ -24,16 +24,19 @@ def fetch_single_ticker(ticker: str, interval="1d", period="3mo") -> pd.DataFram
     df.reset_index(inplace=True)
 
     date_col = "Date" if "Date" in df.columns else "Datetime"
-    # 根据维度区分时间格式，严格统一对齐美东时间 (America/New_York，美股开盘 09:30-16:00)
+    # 根据维度区分时间格式：日线直接对齐交易所官方交易日，分时线统一对齐美东交易时钟
     dt_series = pd.to_datetime(df[date_col])
-    if dt_series.dt.tz is None:
-        dt_series = dt_series.dt.tz_localize("UTC").dt.tz_convert("America/New_York")
-    else:
-        dt_series = dt_series.dt.tz_convert("America/New_York")
-
     if interval in ["1h", "5m"]:
+        if dt_series.dt.tz is None:
+            dt_series = dt_series.dt.tz_localize("UTC").dt.tz_convert("America/New_York")
+        else:
+            try:
+                dt_series = dt_series.dt.tz_convert("America/New_York")
+            except Exception:
+                pass
         df["Date"] = dt_series.dt.strftime("%Y-%m-%d %H:%M")
     else:
+        # 日线/周线直接按交易日原生输出 YYYY-MM-DD，杜绝跨时区日期倒退一天问题
         df["Date"] = dt_series.dt.strftime("%Y-%m-%d")
 
     df = df[["Date", "Open", "High", "Low", "Close", "Volume"]]

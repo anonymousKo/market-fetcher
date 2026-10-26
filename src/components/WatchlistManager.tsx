@@ -14,11 +14,7 @@ import {
   FileCode,
   CheckCircle2,
   AlertCircle,
-  ExternalLink,
-  Copy,
   Folder,
-  Globe,
-  FileSpreadsheet,
 } from 'lucide-react';
 import { SearchSuggestion, TimeframeId, TickerFetchResult } from '../types';
 import { TIMEFRAMES, fetchTickerData } from '../services/klineService';
@@ -44,7 +40,6 @@ export interface WatchlistConfig {
 }
 
 const STORAGE_KEY_WATCHLIST = 'market_kline_watchlist_config_v1';
-const STORAGE_KEY_GITHUB_REPO = 'market_kline_github_repo_v1';
 
 const DEFAULT_CONFIG: WatchlistConfig = {
   version: '1.1.0',
@@ -106,14 +101,6 @@ export function WatchlistManager() {
     return DEFAULT_CONFIG;
   });
 
-  const [githubRepo, setGithubRepo] = useState<string>(() => {
-    try {
-      return localStorage.getItem(STORAGE_KEY_GITHUB_REPO) || 'your-username/market-kline-fetcher';
-    } catch (e) {
-      return 'your-username/market-kline-fetcher';
-    }
-  });
-
   const [inputTicker, setInputTicker] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
@@ -122,7 +109,6 @@ export function WatchlistManager() {
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
-  const [copiedLink, setCopiedLink] = useState<string | null>(null);
 
   // 本地测试运行状态
   const [isTesting, setIsTesting] = useState<boolean>(false);
@@ -178,12 +164,7 @@ export function WatchlistManager() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const handleRepoChange = (val: string) => {
-    setGithubRepo(val);
-    try {
-      localStorage.setItem(STORAGE_KEY_GITHUB_REPO, val);
-    } catch (e) {}
-  };
+
 
   // 添加标的
   const handleAddTicker = (symbolToAdd: string) => {
@@ -352,14 +333,7 @@ export function WatchlistManager() {
     URL.revokeObjectURL(url);
   };
 
-  const handleCopyText = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedLink(id);
-    setTimeout(() => setCopiedLink(null), 2000);
-  };
-
   const activeTimeframes = config.timeframes.filter((tf) => tf.enabled);
-  const cleanRepo = githubRepo.trim() || 'your-username/market-kline-fetcher';
 
   return (
     <div className="space-y-6">
@@ -610,98 +584,6 @@ export function WatchlistManager() {
           </div>
         </div>
 
-        {/* 3. GitHub 仓库永久独立文件直链生成器 (URL Generator) */}
-        <div className="space-y-3 pt-3 border-t border-slate-800">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <label className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-              <Globe className="w-4 h-4 text-emerald-400" />
-              <span>3. 每个 CSV 文件的 GitHub 独立直链预览</span>
-            </label>
-
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] text-slate-400">GitHub 仓库:</span>
-              <input
-                type="text"
-                value={githubRepo}
-                onChange={(e) => handleRepoChange(e.target.value)}
-                placeholder="your-username/your-repo"
-                className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono text-indigo-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500 w-52"
-              />
-            </div>
-          </div>
-
-          <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2 max-h-60 overflow-y-auto font-mono text-xs">
-            {config.tickers.map((ticker) => {
-              const safeName = ticker.replace(/[\\/*?:"<>|=]/g, '_');
-              return (
-                <div key={ticker} className="space-y-1.5 pb-2 border-b border-slate-850 last:border-0 last:pb-0">
-                  <div className="text-indigo-400 font-bold flex items-center gap-1.5">
-                    <Folder className="w-3.5 h-3.5" />
-                    <span>kline_data/{safeName}/</span>
-                  </div>
-
-                  {activeTimeframes.map((tf) => {
-                    const filePath = `kline_data/${safeName}/${tf.interval}_kline.csv`;
-                    const blobUrl = `https://github.com/${cleanRepo}/blob/main/${filePath}`;
-                    const rawUrl = `https://raw.githubusercontent.com/${cleanRepo}/main/${filePath}`;
-
-                    return (
-                      <div
-                        key={tf.interval}
-                        className="flex flex-wrap items-center justify-between gap-2 pl-5 py-1 text-[11px] hover:bg-slate-900 rounded px-2 transition"
-                      >
-                        <span className="text-slate-300">
-                          📄 {tf.interval}_kline.csv{' '}
-                          <span className="text-slate-500">({tf.period})</span>
-                        </span>
-
-                        <div className="flex items-center gap-3">
-                          <button
-                            type="button"
-                            onClick={() => handleCopyText(blobUrl, `${ticker}-${tf.interval}-blob`)}
-                            className="text-slate-400 hover:text-white flex items-center gap-1 text-[10px]"
-                            title="复制 GitHub 浏览页面链接"
-                          >
-                            {copiedLink === `${ticker}-${tf.interval}-blob` ? (
-                              <Check className="w-3 h-3 text-emerald-400" />
-                            ) : (
-                              <Copy className="w-3 h-3" />
-                            )}
-                            <span>网页链接</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => handleCopyText(rawUrl, `${ticker}-${tf.interval}-raw`)}
-                            className="text-emerald-400 hover:text-emerald-300 flex items-center gap-1 text-[10px]"
-                            title="复制原始 CSV 文件直接下载直链"
-                          >
-                            {copiedLink === `${ticker}-${tf.interval}-raw` ? (
-                              <Check className="w-3 h-3 text-emerald-400" />
-                            ) : (
-                              <Copy className="w-3 h-3" />
-                            )}
-                            <span>Raw 直链</span>
-                          </button>
-
-                          <a
-                            href={blobUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-indigo-400 hover:text-indigo-300 flex items-center gap-0.5 text-[10px]"
-                          >
-                            <span>打开</span>
-                            <ExternalLink className="w-2.5 h-2.5" />
-                          </a>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
-        </div>
 
         {/* 底部操作与模拟运行 */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800">

@@ -129,15 +129,27 @@ export function cleanTickerName(ticker: string): string {
 }
 
 /**
- * 格式化时间戳为美东时间 (America/New_York，严格对齐美股 09:30 - 16:00 交易时钟)
+ * 格式化时间戳，自动按交易所时区规范对齐 (美股 America/New_York，港股 Asia/Hong_Kong)
  * 日线/周线: YYYY-MM-DD
  * 1小时/5分钟分时: YYYY-MM-DD HH:mm
  */
-export function formatKLineDate(timestampSec: number, hasTime: boolean): string {
+export function formatKLineDate(
+  timestampSec: number,
+  hasTime: boolean,
+  timeZone: string = 'America/New_York'
+): string {
   const date = new Date(timestampSec * 1000);
 
+  // 防御有效时区
+  let validTz = timeZone;
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: validTz });
+  } catch (e) {
+    validTz = 'America/New_York';
+  }
+
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
+    timeZone: validTz,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -205,6 +217,8 @@ export async function fetchTickerData(
       }
 
       const timestamps: number[] = result.timestamp;
+      const exchangeTimezone =
+        result.meta?.exchangeTimezoneName || 'America/New_York';
       const quote = result.indicators?.quote?.[0] || {};
       const opens: number[] = quote.open || [];
       const highs: number[] = quote.high || [];
@@ -222,7 +236,11 @@ export async function fetchTickerData(
 
         if (o == null || h == null || l == null || c == null) continue;
 
-        const dateStr = formatKLineDate(timestamps[i], timeframeConfig.hasTime);
+        const dateStr = formatKLineDate(
+          timestamps[i],
+          timeframeConfig.hasTime,
+          exchangeTimezone
+        );
         allRows.push({
           Date: dateStr,
           Open: Math.round(o * 100) / 100,
