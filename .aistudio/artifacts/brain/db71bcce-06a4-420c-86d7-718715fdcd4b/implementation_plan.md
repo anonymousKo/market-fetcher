@@ -1,91 +1,94 @@
-# 自选股票列表与 GitHub Action 定时抓取配置实施方案
+# 按股票代码分文件夹与 GitHub 独立永久文件链接方案
 
-为系统增加**自选股票监控管理与 GitHub Actions 定时自动下载配置**功能。用户可在前后台灵活配置自选股票清单与维度周期（默认：日线 3 个月 + 1 小时 1 个月），由 GitHub Action 在每个美股交易日收盘后（美东 16:30 / 北京时间次日凌晨 04:30）全自动触发抓取，并将清洗后的多周期 CSV 数据集自动打包为构建产物（Artifacts）供随时下载。
+根据您的确认要求，将定时下载的 K 线数据重构为**「按股票代码分文件夹」**的目录结构，并通过 GitHub Actions 自动**提交并推送到 GitHub 仓库**，使每个 CSV 文件在 GitHub 上都拥有其**永久独立的浏览与下载直链**。
 
 ---
 
 ### 用户确认决策
 
 > [!IMPORTANT]
-> - **保存形式**：每次定时抓取完成后，自动打包为 **GitHub Actions 构建产物附件（Artifacts）** 供随时下载，不污染 Git 提交历史。
-> - **定时触发时刻**：美股每个交易日收盘后（周一至周五，美东时间 16:30，即 **UTC 20:30 / 北京时间次日 04:30**）。
-> - **默认维度与跨度**：
->   1. **日线 (`1d`)**：**3 个月 (`3mo`)**（覆盖季度波段）
->   2. **1 小时 (`1h`)**：**1 个月 (`1mo`)**（覆盖中短线日内小时波段）
->   *(支持在后台自定义扩展或微调)*
+> - **文件托管与链接提供**：通过 GitHub Actions 自动 `git commit & push` 提交到仓库，由 GitHub 仓库原生提供永久独立文件链接（含网页浏览链接与 Raw 纯文本直链）。
+> - **文件夹层级结构**：按股票代码分文件夹，结构规范如下：
+>   ```text
+>   kline_data/
+>   ├── TSM/
+>   │   ├── 1d_kline.csv     # 日线数据
+>   │   └── 1h_kline.csv     # 1小时数据
+>   ├── NVDA/
+>   │   ├── 1d_kline.csv
+>   │   └── 1h_kline.csv
+>   ├── AAPL/
+>   │   ├── 1d_kline.csv
+>   │   └── 1h_kline.csv
+>   └── ...
+>   ```
+> - **每个 CSV 文件的独立链接形态**：
+>   1. **仓库页面链接 (Blob URL)**：`https://github.com/<owner>/<repo>/blob/main/kline_data/{ticker}/{interval}_kline.csv`
+>   2. **直接下载直链 (Raw URL)**：`https://raw.githubusercontent.com/<owner>/<repo>/main/kline_data/{ticker}/{interval}_kline.csv`
 
 ---
 
-## 1. 架构设计与配置体系
+## 1. 架构与流程设计
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│               Web 端：自选股票与定时配置面板            │
-│  - 可视化增删自选标的 (含智能搜索联想)                 │
-│  - 自由配置监控维度 (默认 1d 3mo + 1h 1mo)             │
-│  - 本地与服务端配置文件双向同步 (watchlist_config.json)│
+│               GitHub Action 定时触发运行               │
+│               (周一至周五 美东时间 16:30)              │
 └───────────────────────────┬────────────────────────────┘
                             │
                             ▼
 ┌────────────────────────────────────────────────────────┐
-│         配置文件：watchlist_config.json                 │
-│  - 存储自选股票代码列表 (tickers)                      │
-│  - 存储抓取维度配置 (timeframes: 1d 3mo, 1h 1mo...)   │
-│  - 存储 Cron 调度说明与输出目录规范                    │
+│     fetch_data.py 执行多周期抓取并按标的建子目录       │
+│  - 创建 kline_data/TSM/ 并写入 1d_kline.csv、1h_kline.csv│
+│  - 创建 kline_data/NVDA/ 并写入 ...                    │
 └───────────────────────────┬────────────────────────────┘
                             │
                             ▼
 ┌────────────────────────────────────────────────────────┐
-│     GitHub Actions 工作流：.github/workflows/...       │
-│  - 定时触发：cron '30 20 * * 1-5' (美东 16:30)         │
-│  - 手动触发：workflow_dispatch (支持在 GitHub 随时点运行)│
-│  - 自动执行：python fetch_data.py --config ...         │
-│  - 归档产物：actions/upload-artifact@v4 打包下载      │
+│     自动 git commit & git push 推送至 GitHub 仓库      │
+│  - 检查变动并自动提交 "📊 update kline data: YYYY-MM-DD"│
+│  - 永久保存在 GitHub 仓库的 kline_data 文件夹中        │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│          生成每个文件的独立访问与下载链接              │
+│  - 写入 GITHUB_STEP_SUMMARY 汇总直链表格               │
+│  - Web 端提供每个标的子文件夹的路径与永久链接生成工具   │
 └────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. 详细实现模块
+## 2. 详细改造步骤
 
-### 模块 A：配置文件 `watchlist_config.json`
-标准化 JSON 配置文件，支持被 Python 脚本和前端界面同时读取与维护：
-- `tickers`: 自选股票数组（默认预设常用标的，如 `["TSM", "NVDA", "AAPL", "MU", "SOXQ"]`）。
-- `timeframes`: 监控维度与周期列表，默认包含：
-  - `{ "interval": "1d", "period": "3mo", "label": "日线 3个月" }`
-  - `{ "interval": "1h", "period": "1mo", "label": "1小时 1个月" }`
-- `output_dir`: 输出目录，默认为 `kline_data`。
+### 步骤 A：升级 Python 脚本 (`fetch_data.py`)
+- 将原本平铺的 `{safe_name}_{interval}_kline.csv` 改为按标的建立子文件夹：
+  - 标的目录：`os.path.join(output_dir, safe_name)`（如 `kline_data/TSM/`）；
+  - 文件命名：`{interval}_kline.csv`（如 `1d_kline.csv`、`1h_kline.csv`、`5m_kline.csv`）；
+  - 自动创建父级目录（`os.makedirs(ticker_dir, exist_ok=True)`）。
+- 在汇总报告中输出规范的相对路径（如 `kline_data/TSM/1d_kline.csv`）及对应的仓库访问链接模板。
 
-### 模块 B：Python 脚本升级 (`fetch_data.py`)
-扩展 `fetch_data.py` CLI 能力：
-- 新增 `--config watchlist_config.json` 支持，自动解析配置文件中的股票与维度；
-- 循环针对每个股票抓取其配置的每个维度（如 `TSM_1d_kline.csv` 和 `TSM_1h_kline.csv`）；
-- 数据时间统一规范为美东时区（`America/New_York`），首根对齐 `09:30` 开盘；
-- 生成详尽的 Markdown 报告写入 `$GITHUB_STEP_SUMMARY`，在 GitHub Actions 运行页面直接生成表格与折叠详情。
+### 步骤 B：改造 GitHub Actions 工作流 (`.github/workflows/daily_kline_download.yml`)
+- 授予工作流写入权限：`permissions: contents: write`；
+- 新增 Git 提交与推送步骤：
+  - 配置 `git config user.name "github-actions[bot]"`；
+  - 暂存 `git add kline_data/`；
+  - 仅在有实际数据变更时自动提交并 `git push`（带有 `[skip ci]` 避免循环触发）；
+- 在 `$GITHUB_STEP_SUMMARY` 运行摘要中输出每个 CSV 文件的两个独立链接：
+  - **点击在线预览**（GitHub 页面）
+  - **点击直接下载**（Raw 文件）
 
-### 模块 C：GitHub Actions 工作流 (`.github/workflows/daily_kline_download.yml`)
-- 调度规则：`cron: '30 20 * * 1-5'`（美东交易日 16:30 收盘后触发）；
-- 同时启用 `workflow_dispatch:`，允许在 GitHub 页面点击 "Run workflow" 手动随时执行；
-- 执行 Python 环境配置并安装 `yfinance` 与 `pandas`；
-- 调用 `actions/upload-artifact@v4`，生成带有当天日期的 zip 附件包（如 `kline-data-2026-10-26.zip`），保留期 30 天。
-
-### 模块 D：Web 界面新增「自选监控与定时配置」专属面板
-在顶部导航新增第 3 个 Tab：
-1. **自选股可视化管理**：
-   - 快速添加标的（输入框 + 智能搜索联想 + 热门标的一键点击）；
-   - 标的标签卡片管理（显示代码、中英文名称，支持一键移除）；
-2. **维度与时间跨度配置**：
-   - 默认展示 `日线 3 个月` 与 `1 小时 1 个月`；
-   - 支持动态新增其他维度（如 `5 分钟 1 天`）或调整跨度；
-3. **GitHub Action 状态与指引卡片**：
-   - 直观展示 Cron 触发时间（美东 16:30 / 北京时间次日 04:30）；
-   - 展示产物下载方式与 GitHub Workflow 配置文件预览；
-   - 提供「立即在网页中模拟抓取」按钮，方便随时验证自选股全量数据。
+### 步骤 C：升级 Web 界面 (`src/components/WatchlistManager.tsx`)
+- 在「自选监控与 GitHub Action」面板中更新文件夹层级展示；
+- 浏览器模拟测试运行生成的表格中，清晰展示每个文件的完整目录路径（例如 `kline_data/TSM/1d_kline.csv`）；
+- 新增「每个 CSV 的仓库独立直链」预览卡片，用户只需输入或自动读取自己的 GitHub 仓库名，即可一键复制每个 CSV 文件的 GitHub 直链；
+- 更新 `watchlist_config.json` 标注 `"folder_structure": "by_ticker"`。
 
 ---
 
 ## 3. 验证步骤
 
-1. **测试 Python 脚本解析配置**：在本地运行 `python3 fetch_data.py --config watchlist_config.json` 检验多股票多维度抓取与文件输出。
-2. **校验 Workflow 语法**：验证 `.github/workflows/daily_kline_download.yml` 的 Actions 语法与 Cron 表达式正确性。
-3. **前端交互验证**：在网页端添加、删除自选股并修改周期，验证配置能够实时生效与导出。
+1. **测试 Python 脚本目录生成**：在本地运行 `python3 fetch_data.py --config watchlist_config.json`，验证是否生成 `kline_data/{ticker}/{interval}_kline.csv` 层级。
+2. **检查 GitHub Actions 权限与命令**：核验工作流中的 `git add`、`commit`、`push` 逻辑与 `GITHUB_STEP_SUMMARY` 链接生成。
+3. **前端展示验证**：在网页端查看自选股管理界面，验证目录结构、单文件下载及链接生成逻辑。

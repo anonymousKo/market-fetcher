@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to add a Watchlist & GitHub Actions automated daily download configuration, supporting multi-timeframe setups (default: daily 3mo and 1-hour 1mo) and artifact packaging at US market close.",
-  "updatedAt":  "2026-10-26T07:18:39.779017620Z",
+  "summary":  "Implementation plan to organize K-line CSV files into ticker subfolders (e.g. kline_data/TSM/1d_kline.csv), automatically commit and push them to the GitHub repository, and generate permanent independent file links for each CSV.",
+  "updatedAt":  "2026-10-26T09:24:38.221235287Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

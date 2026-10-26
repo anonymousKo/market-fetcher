@@ -146,9 +146,22 @@ python fetch_data.py
 }
 ```
 
-### 3. 数据产物下载
-- 每次 Action 运行完成后，数据自动保存至 `kline_data/` 并使用 `actions/upload-artifact@v4` 打包上传为构建产物（保留 30 天）。
-- 在 GitHub 仓库页面进入当次运行记录，点击 **Artifacts** 即可一键下载全套 CSV 数据压缩包。
+### 3. 文件夹层级与独立文件链接
+数据将按股票代码建立独立子目录，每个 CSV 文件均在 GitHub 仓库中拥有其永久独立链接：
+```text
+kline_data/
+├── TSM/
+│   ├── 1d_kline.csv     # 网页链接: blob/main/kline_data/TSM/1d_kline.csv
+│   └── 1h_kline.csv     # 直链下载: raw.githubusercontent.com/.../TSM/1h_kline.csv
+├── NVDA/
+│   ├── 1d_kline.csv
+│   └── 1h_kline.csv
+└── ...
+```
+
+- **自动 Git 提交推送**：工作流每日抓取后自动 `git commit & push` 到 GitHub 仓库。
+- **独立文件直链**：每个 CSV 文件均支持在 GitHub 页面直接查看（Blob 链接）或通过 Raw 链接直接下载。
+- **Step Summary 汇总直链表**：在 GitHub Actions 运行记录页自动渲染带每个 CSV 独立超链接的清单。
 
 ---
 

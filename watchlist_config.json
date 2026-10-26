@@ -1,6 +1,7 @@
 {
   "$schema": "./watchlist_schema.json",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "folder_structure": "by_ticker",
   "schedule": {
     "description": "美股收盘后每日定时自动抓取 (周一至周五 美东时间 16:30 / UTC 20:30)",
     "cron": "30 20 * * 1-5",

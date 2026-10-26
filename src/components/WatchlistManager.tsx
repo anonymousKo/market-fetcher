@@ -6,18 +6,19 @@ import {
   Download,
   Play,
   RotateCcw,
-  Save,
   Check,
   Search,
   RefreshCw,
   FolderArchive,
   Layers,
-  Sparkles,
   FileCode,
-  Calendar,
   CheckCircle2,
   AlertCircle,
   ExternalLink,
+  Copy,
+  Folder,
+  Globe,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { SearchSuggestion, TimeframeId, TickerFetchResult } from '../types';
 import { TIMEFRAMES, fetchTickerData } from '../services/klineService';
@@ -30,6 +31,8 @@ export interface WatchlistTimeframeConfig {
 }
 
 export interface WatchlistConfig {
+  version: string;
+  folder_structure: string;
   schedule: {
     description: string;
     cron: string;
@@ -41,8 +44,11 @@ export interface WatchlistConfig {
 }
 
 const STORAGE_KEY_WATCHLIST = 'market_kline_watchlist_config_v1';
+const STORAGE_KEY_GITHUB_REPO = 'market_kline_github_repo_v1';
 
 const DEFAULT_CONFIG: WatchlistConfig = {
+  version: '1.1.0',
+  folder_structure: 'by_ticker',
   schedule: {
     description: '美股收盘后每日定时自动抓取 (周一至周五 美东时间 16:30 / UTC 20:30)',
     cron: '30 20 * * 1-5',
@@ -90,11 +96,22 @@ export function WatchlistManager() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed.tickers && parsed.timeframes) {
-          return parsed;
+          return {
+            ...DEFAULT_CONFIG,
+            ...parsed,
+          };
         }
       }
     } catch (e) {}
     return DEFAULT_CONFIG;
+  });
+
+  const [githubRepo, setGithubRepo] = useState<string>(() => {
+    try {
+      return localStorage.getItem(STORAGE_KEY_GITHUB_REPO) || 'your-username/market-kline-fetcher';
+    } catch (e) {
+      return 'your-username/market-kline-fetcher';
+    }
   });
 
   const [inputTicker, setInputTicker] = useState<string>('');
@@ -105,6 +122,7 @@ export function WatchlistManager() {
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState<string | null>(null);
 
   // 本地测试运行状态
   const [isTesting, setIsTesting] = useState<boolean>(false);
@@ -114,6 +132,7 @@ export function WatchlistManager() {
       ticker: string;
       interval: TimeframeId;
       period: string;
+      path: string;
       result: TickerFetchResult;
     }>
   >([]);
@@ -158,6 +177,13 @@ export function WatchlistManager() {
     }, 250);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  const handleRepoChange = (val: string) => {
+    setGithubRepo(val);
+    try {
+      localStorage.setItem(STORAGE_KEY_GITHUB_REPO, val);
+    } catch (e) {}
+  };
 
   // 添加标的
   const handleAddTicker = (symbolToAdd: string) => {
@@ -224,7 +250,6 @@ export function WatchlistManager() {
       return tf;
     });
 
-    // 至少保留一个启用的维度
     if (updatedTimeframes.every((tf) => !tf.enabled)) {
       alert('请至少保留一个启用的监控维度');
       return;
@@ -268,7 +293,7 @@ export function WatchlistManager() {
     URL.revokeObjectURL(url);
   };
 
-  // 在浏览器中立即执行模拟抓取
+  // 在浏览器中立即执行模拟抓取测试
   const handleRunBrowserTest = async () => {
     const activeTfs = config.timeframes.filter((tf) => tf.enabled);
     if (config.tickers.length === 0) {
@@ -287,6 +312,7 @@ export function WatchlistManager() {
       ticker: string;
       interval: TimeframeId;
       period: string;
+      path: string;
       result: TickerFetchResult;
     }> = [];
 
@@ -297,10 +323,13 @@ export function WatchlistManager() {
       for (const tf of activeTfs) {
         setTestProgress(`正在抓取 ${ticker} (${tf.interval} · ${tf.period}) [${completed + 1}/${totalTasks}]...`);
         const res = await fetchTickerData(ticker, tf.interval, tf.period);
+        const safeName = ticker.replace(/[\\/*?:"<>|=]/g, '_');
+        const path = `kline_data/${safeName}/${tf.interval}_kline.csv`;
         results.push({
           ticker,
           interval: tf.interval,
           period: tf.period,
+          path,
           result: res,
         });
         completed++;
@@ -308,11 +337,12 @@ export function WatchlistManager() {
     }
 
     setTestResults(results);
-    setTestProgress(`模拟抓取完成！共处理 ${completed} 个子任务`);
+    setTestProgress(`模拟抓取完成！共生成 ${completed} 个子文件夹与独立文件`);
     setIsTesting(false);
   };
 
-  const handleDownloadSingleResult = (fileName: string, csvText: string) => {
+  const handleDownloadSingleResult = (path: string, csvText: string) => {
+    const fileName = path.split('/').join('_');
     const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -322,17 +352,14 @@ export function WatchlistManager() {
     URL.revokeObjectURL(url);
   };
 
-  const handleDownloadAllResults = () => {
-    testResults.forEach((item, index) => {
-      if (item.result.success && item.result.csvText) {
-        setTimeout(() => {
-          handleDownloadSingleResult(item.result.fileName, item.result.csvText);
-        }, index * 200);
-      }
-    });
+  const handleCopyText = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedLink(id);
+    setTimeout(() => setCopiedLink(null), 2000);
   };
 
   const activeTimeframes = config.timeframes.filter((tf) => tf.enabled);
+  const cleanRepo = githubRepo.trim() || 'your-username/market-kline-fetcher';
 
   return (
     <div className="space-y-6">
@@ -341,11 +368,12 @@ export function WatchlistManager() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
           <div className="space-y-1">
             <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <FolderArchive className="w-5 h-5 text-indigo-400" />
-              自选股票监控与 GitHub Actions 定时配置
+              <Folder className="w-5 h-5 text-indigo-400" />
+              自选股票监控 · 按股票分文件夹与独立链接
             </h2>
             <p className="text-xs text-slate-400">
-              设置您的每日自选股票池与监控维度，GitHub Action 将在每个美股交易日收盘后自动运行并将数据打包供下载。
+              采用 <code className="text-indigo-300 font-mono">kline_data/{'{ticker}'}/{'{interval}'}_kline.csv</code> 结构存储，
+              每天美股收盘后由 GitHub Actions 自动提交推送，每个文件均拥有永久独立的 GitHub 浏览与直链。
             </p>
           </div>
 
@@ -376,68 +404,16 @@ export function WatchlistManager() {
           </div>
         </div>
 
-        {/* GitHub Actions 运行计划卡片 */}
-        <div className="bg-gradient-to-r from-slate-950 to-indigo-950/30 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-              <Clock className="w-5 h-5" />
-            </div>
-            <div className="space-y-0.5">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-white">GitHub Action 每日定时任务</span>
-                <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-400 font-mono">
-                  Active (30 20 * * 1-5)
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                触发周期: <strong className="text-slate-200">周一至周五 美东时间 16:30</strong> (北京时间次日凌晨 04:30) · 产物保留 30 天
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 text-xs">
-            <button
-              type="button"
-              onClick={() => setShowConfigJson(!showConfigJson)}
-              className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs border border-slate-800 transition flex items-center gap-1.5"
-            >
-              <FileCode className="w-3.5 h-3.5 text-indigo-400" />
-              <span>{showConfigJson ? '收起配置代码' : '查看配置文件'}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* JSON 配置预览面板 */}
-        {showConfigJson && (
-          <div className="bg-slate-950 rounded-xl border border-slate-800 p-4 space-y-2">
-            <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
-              <span>watchlist_config.json</span>
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(JSON.stringify(config, null, 2));
-                  alert('配置 JSON 已复制到剪贴板');
-                }}
-                className="text-indigo-400 hover:text-indigo-300"
-              >
-                复制 JSON
-              </button>
-            </div>
-            <pre className="p-3 bg-slate-900 rounded-lg text-xs font-mono text-slate-200 overflow-x-auto max-h-60 leading-relaxed">
-              {JSON.stringify(config, null, 2)}
-            </pre>
-          </div>
-        )}
 
         {/* 1. 监控维度与周期设置 (默认: 日线 3个月 + 1小时 1个月) */}
         <div className="space-y-3 pt-1">
           <div className="flex items-center justify-between">
             <label className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
               <Layers className="w-4 h-4 text-indigo-400" />
-              <span>1. 抓取维度与时间区间配置 (默认: 日线3个月 · 1小时1个月)</span>
+              <span>1. 监控维度与时间区间配置 (默认: 日线3个月 · 1小时1个月)</span>
             </label>
             <span className="text-[11px] text-slate-500">
-              各维度数据首根严格以美东 09:30 开盘时刻起算
+              数据首根严格以美东 09:30 开盘时刻起算
             </span>
           </div>
 
@@ -467,8 +443,8 @@ export function WatchlistManager() {
                         className="text-xs font-bold text-white cursor-pointer flex items-center gap-1.5 font-mono"
                       >
                         <span>{tfConfig.label}</span>
-                        <span className="text-[10px] text-indigo-400 bg-indigo-500/10 px-1.5 py-0.2 rounded">
-                          {tfConfig.shortLabel}
+                        <span className="text-[10px] text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded">
+                          {tf.interval}_kline.csv
                         </span>
                       </label>
                     </div>
@@ -504,7 +480,7 @@ export function WatchlistManager() {
           <div className="flex items-center justify-between">
             <label className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
               <Search className="w-4 h-4 text-indigo-400" />
-              <span>2. 自选股票列表 (Watchlist Tickers)</span>
+              <span>2. 自选股票列表 (每个标的将建立独立文件夹)</span>
             </label>
             <span className="text-xs text-indigo-400 font-mono">
               当前共 {config.tickers.length} 个标的
@@ -612,11 +588,12 @@ export function WatchlistManager() {
                 className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 transition group"
               >
                 <div className="space-y-0.5">
-                  <span className="font-bold font-mono text-sm text-white block">
+                  <span className="font-bold font-mono text-sm text-white flex items-center gap-1">
+                    <Folder className="w-3.5 h-3.5 text-indigo-400" />
                     {ticker}
                   </span>
                   <span className="text-[10px] text-slate-500 font-mono">
-                    {activeTimeframes.length} 个维度
+                    {activeTimeframes.map((tf) => `${tf.interval}`).join(', ')}
                   </span>
                 </div>
 
@@ -633,15 +610,108 @@ export function WatchlistManager() {
           </div>
         </div>
 
+        {/* 3. GitHub 仓库永久独立文件直链生成器 (URL Generator) */}
+        <div className="space-y-3 pt-3 border-t border-slate-800">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+              <Globe className="w-4 h-4 text-emerald-400" />
+              <span>3. 每个 CSV 文件的 GitHub 独立直链预览</span>
+            </label>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-400">GitHub 仓库:</span>
+              <input
+                type="text"
+                value={githubRepo}
+                onChange={(e) => handleRepoChange(e.target.value)}
+                placeholder="your-username/your-repo"
+                className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono text-indigo-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500 w-52"
+              />
+            </div>
+          </div>
+
+          <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2 max-h-60 overflow-y-auto font-mono text-xs">
+            {config.tickers.map((ticker) => {
+              const safeName = ticker.replace(/[\\/*?:"<>|=]/g, '_');
+              return (
+                <div key={ticker} className="space-y-1.5 pb-2 border-b border-slate-850 last:border-0 last:pb-0">
+                  <div className="text-indigo-400 font-bold flex items-center gap-1.5">
+                    <Folder className="w-3.5 h-3.5" />
+                    <span>kline_data/{safeName}/</span>
+                  </div>
+
+                  {activeTimeframes.map((tf) => {
+                    const filePath = `kline_data/${safeName}/${tf.interval}_kline.csv`;
+                    const blobUrl = `https://github.com/${cleanRepo}/blob/main/${filePath}`;
+                    const rawUrl = `https://raw.githubusercontent.com/${cleanRepo}/main/${filePath}`;
+
+                    return (
+                      <div
+                        key={tf.interval}
+                        className="flex flex-wrap items-center justify-between gap-2 pl-5 py-1 text-[11px] hover:bg-slate-900 rounded px-2 transition"
+                      >
+                        <span className="text-slate-300">
+                          📄 {tf.interval}_kline.csv{' '}
+                          <span className="text-slate-500">({tf.period})</span>
+                        </span>
+
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => handleCopyText(blobUrl, `${ticker}-${tf.interval}-blob`)}
+                            className="text-slate-400 hover:text-white flex items-center gap-1 text-[10px]"
+                            title="复制 GitHub 浏览页面链接"
+                          >
+                            {copiedLink === `${ticker}-${tf.interval}-blob` ? (
+                              <Check className="w-3 h-3 text-emerald-400" />
+                            ) : (
+                              <Copy className="w-3 h-3" />
+                            )}
+                            <span>网页链接</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleCopyText(rawUrl, `${ticker}-${tf.interval}-raw`)}
+                            className="text-emerald-400 hover:text-emerald-300 flex items-center gap-1 text-[10px]"
+                            title="复制原始 CSV 文件直接下载直链"
+                          >
+                            {copiedLink === `${ticker}-${tf.interval}-raw` ? (
+                              <Check className="w-3 h-3 text-emerald-400" />
+                            ) : (
+                              <Copy className="w-3 h-3" />
+                            )}
+                            <span>Raw 直链</span>
+                          </button>
+
+                          <a
+                            href={blobUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-indigo-400 hover:text-indigo-300 flex items-center gap-0.5 text-[10px]"
+                          >
+                            <span>打开</span>
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {/* 底部操作与模拟运行 */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800">
           <div className="text-xs text-slate-400">
-            监控统计: <strong className="text-white">{config.tickers.length}</strong> 个标的 ·{' '}
-            <strong className="text-white">{activeTimeframes.length}</strong> 个维度 · 预计生成{' '}
+            监控统计: <strong className="text-white">{config.tickers.length}</strong> 个独立文件夹 ·{' '}
+            <strong className="text-white">{activeTimeframes.length}</strong> 个维度 · 共生成{' '}
             <strong className="text-indigo-300 font-mono">
               {config.tickers.length * activeTimeframes.length}
             </strong>{' '}
-            个 CSV 文件
+            个带独立直链的 CSV 文件
           </div>
 
           <div className="flex items-center gap-2.5">
@@ -682,33 +752,25 @@ export function WatchlistManager() {
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>自选股票多周期抓取测试结果</span>
+                <span>分文件夹抓取测试结果</span>
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
                 成功获取{' '}
                 <span className="text-emerald-400 font-bold font-mono">
                   {testResults.filter((r) => r.result.success).length}
                 </span>{' '}
-                / {testResults.length} 个数据文件，全流程验证成功。
+                / {testResults.length} 个独立文件，目录规范为{' '}
+                <code className="text-indigo-300 font-mono">kline_data/{'{ticker}'}/{'{interval}'}_kline.csv</code>。
               </p>
             </div>
-
-            <button
-              type="button"
-              onClick={handleDownloadAllResults}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition"
-            >
-              <Download className="w-4 h-4" />
-              打包下载全部测试 CSV
-            </button>
           </div>
 
           <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950">
             <table className="w-full text-left text-xs font-mono">
               <thead className="bg-slate-900 text-slate-400 border-b border-slate-800 uppercase text-[11px]">
                 <tr>
-                  <th className="py-2.5 px-4 font-semibold">标的代码</th>
-                  <th className="py-2.5 px-3 font-semibold">维度</th>
+                  <th className="py-2.5 px-4 font-semibold">标的 / 文件夹</th>
+                  <th className="py-2.5 px-3 font-semibold">生成文件路径</th>
                   <th className="py-2.5 px-3 font-semibold">时间跨度</th>
                   <th className="py-2.5 px-3 font-semibold">状态</th>
                   <th className="py-2.5 px-3 font-semibold">K线数量</th>
@@ -718,19 +780,18 @@ export function WatchlistManager() {
               </thead>
               <tbody className="divide-y divide-slate-850 text-slate-300">
                 {testResults.map((item, idx) => {
-                  const { ticker, interval, period, result } = item;
+                  const { ticker, interval, period, path, result } = item;
                   const rowCount = result.rows.length;
                   const latestRow = rowCount > 0 ? result.rows[rowCount - 1] : null;
 
                   return (
                     <tr key={idx} className="hover:bg-slate-900/50 transition">
-                      <td className="py-2.5 px-4 font-bold text-white whitespace-nowrap">
-                        {ticker}
+                      <td className="py-2.5 px-4 font-bold text-white whitespace-nowrap flex items-center gap-1.5">
+                        <Folder className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>{ticker}</span>
                       </td>
-                      <td className="py-2.5 px-3 whitespace-nowrap">
-                        <span className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-mono text-[10px]">
-                          {interval}
-                        </span>
+                      <td className="py-2.5 px-3 whitespace-nowrap text-indigo-300">
+                        {path}
                       </td>
                       <td className="py-2.5 px-3 whitespace-nowrap text-slate-400">
                         {period}
@@ -757,12 +818,12 @@ export function WatchlistManager() {
                           <button
                             type="button"
                             onClick={() =>
-                              handleDownloadSingleResult(result.fileName, result.csvText)
+                              handleDownloadSingleResult(path, result.csvText)
                             }
                             className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 text-indigo-300 text-xs border border-slate-800 transition"
                           >
                             <Download className="w-3 h-3" />
-                            <span>下载 CSV</span>
+                            <span>下载</span>
                           </button>
                         )}
                       </td>

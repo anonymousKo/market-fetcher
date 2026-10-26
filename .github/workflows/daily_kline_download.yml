@@ -14,12 +14,12 @@ on:
         default: ''
 
 jobs:
-  download-and-archive:
-    name: 抓取多周期 K 线并打包
+  download-and-commit:
+    name: 抓取多周期 K 线并提交推送
     runs-on: ubuntu-latest
 
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: 检出仓库代码
@@ -36,7 +36,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 执行多周期数据抓取 (默认读取 watchlist_config.json)
+      - name: 执行多周期数据抓取 (写入 kline_data/{ticker}/{interval}_kline.csv)
         run: |
           if [ -n "${{ github.event.inputs.custom_tickers }}" ]; then
             echo "🚀 运行临时指定标的模式: ${{ github.event.inputs.custom_tickers }}"
@@ -46,10 +46,22 @@ jobs:
             python fetch_data.py --config watchlist_config.json
           fi
 
-      - name: 打包上传 K 线数据为构建产物 (Artifacts)
+      - name: 自动提交并推送数据至 GitHub 仓库
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add kline_data/
+          if git diff --staged --quiet; then
+            echo "ℹ️ 数据无变更，跳过提交。"
+          else
+            git commit -m "📊 update kline data: $(date '+%Y-%m-%d %H:%M') [skip ci]"
+            git push
+          fi
+
+      - name: 附加备份：打包上传构建产物 (Artifacts)
         uses: actions/upload-artifact@v4
         with:
           name: kline-data-daily-${{ github.run_number }}
           path: kline_data/
           retention-days: 30
-          if-no-files-found: error
+          if-no-files-found: ignore
