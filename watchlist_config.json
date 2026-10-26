@@ -20,10 +20,11 @@
   ],
   "tickers": [
     "TSM",
-    "NVDA",
-    "AAPL",
+    "NTSK",
+    "SPCX",
     "MU",
-    "SOXQ"
+    "CRM",
+    "MSFT"
   ],
   "output_dir": "kline_data"
 }
