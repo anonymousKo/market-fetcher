@@ -16,231 +16,26 @@ import {
   Search,
   Calendar,
   Layers,
+  Sparkles,
 } from 'lucide-react';
 import {
   TimeframeId,
-  TimeframeConfig,
   KlineRow,
   TickerFetchResult,
   FetchApiResponse,
   SearchSuggestion,
 } from './types';
-
-// 数据维度与热门跨度配置字典 (严格遵循交易员常见使用场景)
-export const TIMEFRAMES: Record<TimeframeId, TimeframeConfig> = {
-  '1d': {
-    id: '1d',
-    label: '日线',
-    shortLabel: '1D',
-    description: '标准日K线，适合中短期波段与趋势研判',
-    defaultPeriod: '3mo',
-    defaultLimit: 60, // 约60交易日(经典季度波段)
-    hasTime: false,
-    periods: [
-      { value: '1mo', label: '1个月 (约22交易日)' },
-      { value: '3mo', label: '3个月 (热门季度波段 - 约60交易日)', isPopular: true },
-      { value: '6mo', label: '6个月 (半年跨度 - 约125交易日)' },
-      { value: '1y', label: '1年 (经典年线视角 - 约250交易日)' },
-      { value: '2y', label: '2年 (中长期宏观跨度)' },
-    ],
-  },
-  '1wk': {
-    id: '1wk',
-    label: '周线',
-    shortLabel: '1W',
-    description: '周K线大级别，滤除日内噪音，把握中长线大趋势',
-    defaultPeriod: '1y',
-    defaultLimit: 52, // 52周(整年结构)
-    hasTime: false,
-    periods: [
-      { value: '6mo', label: '6个月 (约26周)' },
-      { value: '1y', label: '1年 (热门年度结构 - 约52周)', isPopular: true },
-      { value: '2y', label: '2年 (中期牛熊 - 约104周)' },
-      { value: '5y', label: '5年 (大级别周期)' },
-      { value: 'max', label: '全部历史 (Max)' },
-    ],
-  },
-  '1h': {
-    id: '1h',
-    label: '1小时',
-    shortLabel: '1H',
-    description: '分时小时线，适合数天至数周的波段切入与拐点确认',
-    defaultPeriod: '1mo',
-    defaultLimit: 120, // 约120小时(主要交易时段波段)
-    hasTime: true,
-    periods: [
-      { value: '5d', label: '5天 (近一周日内结构 - 约35小时)' },
-      { value: '1mo', label: '1个月 (热门中短分时 - 约140小时)', isPopular: true },
-      { value: '3mo', label: '3个月 (完整波段分时)' },
-      { value: '6mo', label: '6个月 (中线分时跨度)' },
-      { value: '1y', label: '1年 (接口上限历史分时)' },
-    ],
-  },
-  '5m': {
-    id: '5m',
-    label: '5分钟',
-    shortLabel: '5M',
-    description: '高频日内分时K线，用于超短线精准择时与盘中监控',
-    defaultPeriod: '5d',
-    defaultLimit: 150, // 约2个交易日的高频线
-    hasTime: true,
-    periods: [
-      { value: '1d', label: '1天 (当天日内分时 - 约78根)' },
-      { value: '5d', label: '5天 (热门一周分时 - 约390根)', isPopular: true },
-      { value: '1mo', label: '1个月 (分时最长有效范围)' },
-    ],
-  },
-};
-
-/**
- * 清理标的代码，避免生成文件名时出现非法字符
- * 原逻辑: re.sub(r'[\\/*?:"<>|=]', '_', ticker)
- */
-function cleanTickerName(ticker: string): string {
-  return ticker.replace(/[\\/*?:"<>|=]/g, '_');
-}
-
-/**
- * 格式化时间戳
- * 日线/周线: YYYY-MM-DD
- * 1小时/5分钟分时: YYYY-MM-DD HH:mm
- */
-function formatKLineDate(timestampSec: number, hasTime: boolean): string {
-  const d = new Date(timestampSec * 1000);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  const mm = pad(d.getMonth() + 1);
-  const dd = pad(d.getDate());
-
-  if (!hasTime) {
-    return `${yyyy}-${mm}-${dd}`;
-  }
-  const hh = pad(d.getHours());
-  const min = pad(d.getMinutes());
-  return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
-}
-
-/**
- * 抓取单个标的并清洗数据，严格执行交易员指标规范:
- * - 支持 1d, 1wk, 1h, 5m 多维度
- * - 时间跨度 range 随维度自适应
- * - 条数截取按交易员常用习惯或全量获取
- * - Open, High, Low, Close 保留 2 位小数
- */
-async function fetchTickerData(
-  ticker: string,
-  interval: TimeframeId,
-  period: string
-): Promise<TickerFetchResult> {
-  const safeName = cleanTickerName(ticker);
-  const fileName = `${safeName}_${interval}_kline.csv`;
-  const timeframeConfig = TIMEFRAMES[interval];
-
-  const proxyEndpoints = [
-    `/api/yahoo/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${interval}&range=${encodeURIComponent(period)}`,
-    `https://corsproxy.io/?url=${encodeURIComponent(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=${interval}&range=${period}`
-    )}`,
-  ];
-
-  let lastError = '';
-
-  for (const url of proxyEndpoints) {
-    try {
-      const res = await fetch(url, {
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(9000),
-      });
-
-      if (!res.ok) {
-        lastError = `HTTP ${res.status}`;
-        continue;
-      }
-
-      const json = await res.json();
-      const result = json?.chart?.result?.[0];
-      if (!result || !result.timestamp || result.timestamp.length === 0) {
-        lastError = `标的 ${ticker} 未获取到有效数据`;
-        continue;
-      }
-
-      const timestamps: number[] = result.timestamp;
-      const quote = result.indicators?.quote?.[0] || {};
-      const opens: number[] = quote.open || [];
-      const highs: number[] = quote.high || [];
-      const lows: number[] = quote.low || [];
-      const closes: number[] = quote.close || [];
-      const volumes: number[] = quote.volume || [];
-
-      const allRows: KlineRow[] = [];
-      for (let i = 0; i < timestamps.length; i++) {
-        const o = opens[i];
-        const h = highs[i];
-        const l = lows[i];
-        const c = closes[i];
-        const v = volumes[i];
-
-        if (o == null || h == null || l == null || c == null) continue;
-
-        const dateStr = formatKLineDate(timestamps[i], timeframeConfig.hasTime);
-        allRows.push({
-          Date: dateStr,
-          Open: Math.round(o * 100) / 100,
-          High: Math.round(h * 100) / 100,
-          Low: Math.round(l * 100) / 100,
-          Close: Math.round(c * 100) / 100,
-          Volume: v != null ? Math.round(v) : 0,
-        });
-      }
-
-      if (allRows.length === 0) {
-        lastError = `标的 ${ticker} 数据为空`;
-        continue;
-      }
-
-      // 截取交易员常用经典条数
-      const rows =
-        allRows.length > timeframeConfig.defaultLimit
-          ? allRows.slice(-timeframeConfig.defaultLimit)
-          : allRows;
-
-      // 生成标准 CSV 内容
-      const csvHeader = 'Date,Open,High,Low,Close,Volume';
-      const csvLines = rows.map(
-        (r) =>
-          `${r.Date},${r.Open.toFixed(2)},${r.High.toFixed(2)},${r.Low.toFixed(2)},${r.Close.toFixed(2)},${r.Volume}`
-      );
-      const csvText = [csvHeader, ...csvLines].join('\n');
-
-      return {
-        ticker,
-        safeName,
-        fileName,
-        interval,
-        period,
-        success: true,
-        csvText,
-        rows,
-      };
-    } catch (err: any) {
-      lastError = err.message || '网络请求超时';
-    }
-  }
-
-  return {
-    ticker,
-    safeName,
-    fileName,
-    interval,
-    period,
-    success: false,
-    error: lastError || `标的 ${ticker} 获取失败`,
-    csvText: '',
-    rows: [],
-  };
-}
+import {
+  TIMEFRAMES,
+  fetchTickerData,
+} from './services/klineService';
+import { PromptGenerator } from './components/PromptGenerator';
+import { WatchlistManager } from './components/WatchlistManager';
 
 export default function App() {
+  // 顶部导航模式：'prompt' 为量化 Prompt 生成，'exporter' 为多标的K线导出，'watchlist' 为自选股与 GitHub Action 配置
+  const [activeTab, setActiveTab] = useState<'prompt' | 'exporter' | 'watchlist'>('prompt');
+
   // 基础表单状态：默认列表为空，用户自主输入或检索
   const [tickersInput, setTickersInput] = useState<string>('');
   const [selectedInterval, setSelectedInterval] = useState<TimeframeId>('1d');
@@ -353,7 +148,7 @@ export default function App() {
     logs.push(
       `本次运行抓取标的: [${targetTickers.map((t) => `'${t}'`).join(', ')}] | 维度: ${
         currentTfConfig.label
-      } (${selectedInterval}) | 时间跨度: ${period} | 提取最新常用 ${currentTfConfig.defaultLimit} 根K线`
+      } (${selectedInterval}) | 时间跨度: ${period}`
     );
 
     const results: TickerFetchResult[] = [];
@@ -438,569 +233,609 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-600 selection:text-white">
       {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900/80 px-6 py-4 backdrop-blur sticky top-0 z-20">
+      <header className="border-b border-slate-800 bg-slate-900/90 px-4 sm:px-6 py-3.5 backdrop-blur sticky top-0 z-20">
         <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-4">
+          {/* Logo & Title */}
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-600/30">
+            <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-600/30">
               <FileSpreadsheet className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+              <h1 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
                 market-kline-fetcher
-                <span className="text-[11px] px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-mono">
-                  多维度版
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-mono">
+                  PRO
                 </span>
               </h1>
-              <p className="text-xs text-slate-400">
-                多周期行情 K 线数据抓取与汇总工具 (日线 · 周线 · 1小时 · 5分钟)
+              <p className="text-[11px] text-slate-400">
+                行情 K 线数据抓取与 AI 量化 Prompt 生成工作台
               </p>
             </div>
           </div>
 
-          {fetchResponse && (
-            <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 font-mono">
-              <FolderArchive className="w-4 h-4 text-emerald-400" />
-              <span>
-                成功处理{' '}
-                <strong className="text-white">
-                  {fetchResponse.results.filter((r) => r.success).length}
-                </strong>{' '}
-                / {fetchResponse.targetTickers.length} 个标的
-              </span>
-            </div>
-          )}
+          {/* 主功能 Tab 切换器 */}
+          <div className="flex items-center p-1 bg-slate-950 border border-slate-800 rounded-xl shadow-inner">
+            <button
+              type="button"
+              onClick={() => setActiveTab('prompt')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                activeTab === 'prompt'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>AI 分析 Prompt 生成</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('exporter')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                activeTab === 'exporter'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>K 线数据抓取导出</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('watchlist')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                activeTab === 'watchlist'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+              }`}
+            >
+              <FolderArchive className="w-3.5 h-3.5 text-emerald-400" />
+              <span>自选监控与 GitHub Action</span>
+            </button>
+          </div>
         </div>
       </header>
 
       {/* Main Content */}
       <main className="flex-1 max-w-5xl w-full mx-auto p-4 sm:p-6 space-y-6">
-        {/* 参数配置与触发卡片 */}
-        <section className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl space-y-5">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div className="flex items-center gap-2">
-              <Terminal className="w-4 h-4 text-indigo-400" />
-              <h2 className="text-sm font-bold text-white uppercase tracking-wider">
-                抓取任务参数配置 (Inputs)
-              </h2>
-            </div>
-            <span className="text-xs text-slate-500">
-              多维度自由切换 · 热门时间跨度智能联动
-            </span>
-          </div>
+        {/* TAB 1: AI 分析 Prompt 生成器 */}
+        {activeTab === 'prompt' && <PromptGenerator />}
 
-          {/* 1. 智能代码搜索框 (Smart Ticker Search) */}
-          <div ref={searchContainerRef} className="relative space-y-1.5">
-            <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-              <Search className="w-3.5 h-3.5 text-indigo-400" />
-              <span>智能搜索美股/ETF/期货代码:</span>
-              <span className="text-[11px] font-normal text-slate-400">
-                (输入 TSM、台积电、NVDA、AAPL 快速检索添加)
-              </span>
-            </label>
-
-            <div className="relative">
-              <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onFocus={() => {
-                  if (suggestions.length > 0) setShowDropdown(true);
-                }}
-                placeholder="键入标的代码或公司名称搜索，如: TSM (台积电), AAPL, NVDA..."
-                className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-slate-950 border border-slate-700/80 text-sm font-mono text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition shadow-inner"
-              />
-              {isSearching && (
-                <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin absolute right-3.5 top-1/2 -translate-y-1/2" />
-              )}
-            </div>
-
-            {/* 智能联想下拉列表 */}
-            {showDropdown && suggestions.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden divide-y divide-slate-800">
-                {suggestions.map((item) => {
-                  const alreadyAdded = parsedCurrentTickers.includes(item.symbol.toUpperCase());
-                  return (
-                    <div
-                      key={item.symbol}
-                      onClick={() => handleSelectSuggestion(item)}
-                      className="px-4 py-2.5 hover:bg-slate-800 cursor-pointer flex items-center justify-between text-xs transition"
-                    >
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold font-mono text-white text-sm">
-                            {item.symbol}
-                          </span>
-                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-indigo-500/20 text-indigo-300 font-mono">
-                            {item.exchDisp || '美股'}
-                          </span>
-                          {item.typeDisp && (
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              {item.typeDisp}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-slate-300 text-[11px] line-clamp-1">
-                          {item.longname || item.shortname || item.symbol}
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition ${
-                          alreadyAdded
-                            ? 'bg-slate-800 text-slate-400'
-                            : 'bg-indigo-600 hover:bg-indigo-500 text-white'
-                        }`}
-                      >
-                        {alreadyAdded ? '已在列表' : '+ 添加'}
-                      </button>
-                    </div>
-                  );
-                })}
+        {/* TAB 2: 多标的 K 线抓取与导出 */}
+        {activeTab === 'exporter' && (
+          <div className="space-y-6">
+            {/* 参数配置卡片 */}
+            <section className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl space-y-5">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <Terminal className="w-4 h-4 text-indigo-400" />
+                  <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                    批量抓取任务配置 (Batch Exporter)
+                  </h2>
+                </div>
+                <span className="text-xs text-slate-500">
+                  多维度自由切换 · 统一对齐美东时间 (EST/EDT)
+                </span>
               </div>
-            )}
-          </div>
 
-          <form onSubmit={handleExecuteFetch} className="space-y-4 pt-1">
-            {/* 2. 标的代码输入框 */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
-                <span>标的代码列表 (tickers):</span>
-                {tickersInput.trim() && (
-                  <button
-                    type="button"
-                    onClick={() => setTickersInput('')}
-                    className="text-[11px] text-slate-400 hover:text-rose-400 transition"
-                  >
-                    清空列表
-                  </button>
-                )}
-              </label>
-              <input
-                type="text"
-                value={tickersInput}
-                onChange={(e) => setTickersInput(e.target.value)}
-                placeholder="请输入标的代码，如: TSM, NVDA, AAPL (支持搜索添加或手动输入，逗号分隔)"
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition shadow-inner"
-              />
-              <p className="text-[11px] text-slate-500">
-                支持中英文逗号、分号及空格分隔，例如输入{' '}
-                <code className="text-indigo-300 font-mono">TSM, NVDA</code>。
-              </p>
-            </div>
-
-            {/* 3. 数据维度与时间跨度配置栅格 (二列紧凑布局) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-              {/* 数据维度选择 (分段切换选项卡) */}
-              <div className="space-y-2">
+              {/* 1. 智能代码搜索框 */}
+              <div ref={searchContainerRef} className="relative space-y-1.5">
                 <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>数据维度 (Interval):</span>
+                  <Search className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>智能搜索标的代码:</span>
+                  <span className="text-[11px] font-normal text-slate-400">
+                    (输入 TSM、台积电、NVDA、AAPL 快速检索添加)
+                  </span>
                 </label>
-                <div className="grid grid-cols-4 gap-1 p-1 bg-slate-950 border border-slate-800 rounded-xl">
-                  {(Object.keys(TIMEFRAMES) as TimeframeId[]).map((tfKey) => {
-                    const tf = TIMEFRAMES[tfKey];
-                    const isSelected = selectedInterval === tfKey;
-                    return (
+
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onFocus={() => {
+                      if (suggestions.length > 0) setShowDropdown(true);
+                    }}
+                    placeholder="键入标的代码或公司名称搜索，如: TSM (台积电), AAPL, NVDA..."
+                    className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-slate-950 border border-slate-700/80 text-sm font-mono text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition shadow-inner"
+                  />
+                  {isSearching && (
+                    <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin absolute right-3.5 top-1/2 -translate-y-1/2" />
+                  )}
+                </div>
+
+                {/* 智能联想下拉列表 */}
+                {showDropdown && suggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden divide-y divide-slate-800">
+                    {suggestions.map((item) => {
+                      const alreadyAdded = parsedCurrentTickers.includes(item.symbol.toUpperCase());
+                      return (
+                        <div
+                          key={item.symbol}
+                          onClick={() => handleSelectSuggestion(item)}
+                          className="px-4 py-2.5 hover:bg-slate-800 cursor-pointer flex items-center justify-between text-xs transition"
+                        >
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold font-mono text-white text-sm">
+                                {item.symbol}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-indigo-500/20 text-indigo-300 font-mono">
+                                {item.exchDisp || '美股'}
+                              </span>
+                              {item.typeDisp && (
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  {item.typeDisp}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-slate-300 text-[11px] line-clamp-1">
+                              {item.longname || item.shortname || item.symbol}
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition ${
+                              alreadyAdded
+                                ? 'bg-slate-800 text-slate-400'
+                                : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                            }`}
+                          >
+                            {alreadyAdded ? '已在列表' : '+ 添加'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <form onSubmit={handleExecuteFetch} className="space-y-4 pt-1">
+                {/* 2. 标的代码输入框 */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                    <span>标的代码列表 (tickers):</span>
+                    {tickersInput.trim() && (
                       <button
-                        key={tfKey}
                         type="button"
-                        onClick={() => handleSelectTimeframe(tfKey)}
-                        className={`py-2 px-1 text-center rounded-lg text-xs font-semibold transition cursor-pointer ${
-                          isSelected
-                            ? 'bg-indigo-600 text-white shadow-md'
-                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                        }`}
+                        onClick={() => setTickersInput('')}
+                        className="text-[11px] text-slate-400 hover:text-rose-400 transition"
                       >
-                        <div>{tf.label}</div>
-                        <div className="text-[10px] opacity-75 font-mono">{tf.shortLabel}</div>
+                        清空列表
                       </button>
+                    )}
+                  </label>
+                  <input
+                    type="text"
+                    value={tickersInput}
+                    onChange={(e) => setTickersInput(e.target.value)}
+                    placeholder="请输入标的代码，如: TSM, NVDA, AAPL (支持搜索添加或手动输入，逗号分隔)"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition shadow-inner"
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    支持中英文逗号、分号及空格分隔，例如输入{' '}
+                    <code className="text-indigo-300 font-mono">TSM, NVDA</code>。
+                  </p>
+                </div>
+
+                {/* 3. 数据维度与时间跨度配置栅格 (二列紧凑布局) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                  {/* 数据维度选择 */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>数据维度 (Interval):</span>
+                    </label>
+                    <div className="grid grid-cols-4 gap-1 p-1 bg-slate-950 border border-slate-800 rounded-xl">
+                      {(Object.keys(TIMEFRAMES) as TimeframeId[]).map((tfKey) => {
+                        const tf = TIMEFRAMES[tfKey];
+                        const isSelected = selectedInterval === tfKey;
+                        return (
+                          <button
+                            key={tfKey}
+                            type="button"
+                            onClick={() => handleSelectTimeframe(tfKey)}
+                            className={`py-2 px-1 text-center rounded-lg text-xs font-semibold transition cursor-pointer ${
+                              isSelected
+                                ? 'bg-indigo-600 text-white shadow-md'
+                                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                            }`}
+                          >
+                            <div>{tf.label}</div>
+                            <div className="text-[10px] opacity-75 font-mono">{tf.shortLabel}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[11px] text-slate-400">{activeTf.description}</p>
+                  </div>
+
+                  {/* 联动时间跨度选择 */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>
+                        热门时间跨度 (Period):
+                        <span className="text-[10px] text-indigo-400 ml-1">根据维度自动联动</span>
+                      </span>
+                    </label>
+                    <select
+                      value={period}
+                      onChange={(e) => setPeriod(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-white focus:outline-none focus:border-indigo-500 transition shadow-inner"
+                    >
+                      {activeTf.periods.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label} {opt.isPopular ? '★ 热门推荐' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-slate-500">
+                      当前维度接口有效跨度，首根严格以美东 09:30 开盘时刻起算。
+                    </p>
+                  </div>
+                </div>
+
+                {/* Run Button */}
+                <div className="flex items-center justify-between pt-3 border-t border-slate-800/80">
+                  <div className="text-xs text-slate-400">
+                    抓取维度: <strong className="text-white">{activeTf.label}</strong> · 跨度:{' '}
+                    <strong className="text-white">{period}</strong> · 导出格式:{' '}
+                    <code className="text-indigo-300 font-mono">
+                      {'{ticker}'}_{selectedInterval}_kline.csv
+                    </code>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 disabled:opacity-50 text-white text-sm font-semibold shadow-lg shadow-indigo-600/30 transition cursor-pointer"
+                  >
+                    {isLoading ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>正在抓取中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-4 h-4 fill-current" />
+                        <span>执行抓取任务 (Run)</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            {/* 运行终端日志输出 */}
+            {fetchResponse && (
+              <section className="bg-slate-950 border border-slate-800 rounded-2xl p-4 shadow-lg">
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800/80 text-xs text-slate-400">
+                  <span className="flex items-center gap-1.5 font-mono">
+                    <Terminal className="w-3.5 h-3.5 text-indigo-400" />
+                    执行日志 (Execution Output)
+                  </span>
+                  <span className="text-[11px] text-emerald-400 font-mono">✓ 任务完成</span>
+                </div>
+                <div className="font-mono text-xs text-slate-300 space-y-1 max-h-36 overflow-y-auto leading-relaxed">
+                  {fetchResponse.logs.map((line, idx) => (
+                    <div
+                      key={idx}
+                      className={
+                        line.includes('⚠️')
+                          ? 'text-amber-400'
+                          : line.includes('全部标的抓取完成')
+                          ? 'text-emerald-400 font-semibold'
+                          : 'text-slate-300'
+                      }
+                    >
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* 抓取结果汇总与折叠卡片列表 */}
+            {fetchResponse && (
+              <section className="space-y-4">
+                {/* 汇总标题栏 */}
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 border border-slate-800 px-5 py-3.5 rounded-2xl">
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      📊 K 线数据汇总 (维度: {TIMEFRAMES[fetchResponse.interval]?.label} · 跨度:{' '}
+                      {fetchResponse.period})
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      共处理 {fetchResponse.targetTickers.length} 个标的， 成功获取{' '}
+                      <span className="text-emerald-400 font-bold font-mono">
+                        {fetchResponse.results.filter((r) => r.success).length}
+                      </span>{' '}
+                      个标的数据 · 严格以美东时间开盘 09:30 对齐起算
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={handleDownloadAll}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition"
+                  >
+                    <Download className="w-4 h-4" />
+                    打包下载全部 CSV
+                  </button>
+                </div>
+
+                {/* 逐个标的的折叠展示卡片 */}
+                <div className="space-y-3">
+                  {fetchResponse.results.map((item) => {
+                    const isExpanded = !!expandedTickers[item.ticker];
+                    const viewMode = viewModes[item.ticker] || 'table';
+
+                    return (
+                      <div
+                        key={item.ticker}
+                        className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg transition"
+                      >
+                        {/* 折叠头部 */}
+                        <div
+                          onClick={() => toggleExpand(item.ticker)}
+                          className="flex items-center justify-between px-5 py-3.5 cursor-pointer bg-slate-900 hover:bg-slate-850 transition select-none"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            {isExpanded ? (
+                              <ChevronDown className="w-4 h-4 text-slate-400" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4 text-slate-400" />
+                            )}
+                            <span className="font-bold text-sm text-white font-mono">
+                              点击展开查看：{item.ticker}
+                            </span>
+                            {item.success ? (
+                              <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
+                                {item.rows.length} 根蜡烛 ({TIMEFRAMES[item.interval]?.shortLabel})
+                              </span>
+                            ) : (
+                              <span className="text-[11px] px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 font-mono">
+                                无有效数据
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-3 text-xs text-slate-400">
+                            <span className="font-mono text-slate-500 hidden sm:inline">
+                              {item.fileName}
+                            </span>
+                            {item.success && (
+                              <div
+                                className="flex items-center gap-1.5"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  onClick={() => handleDownloadSingle(item.fileName, item.csvText)}
+                                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition"
+                                  title="下载 CSV"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => handleCopyCsv(item.ticker, item.csvText)}
+                                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition"
+                                  title="复制 CSV"
+                                >
+                                  {copiedTicker === item.ticker ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                  ) : (
+                                    <Copy className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 展开内容 */}
+                        {isExpanded && (
+                          <div className="border-t border-slate-800 p-5 space-y-4 bg-slate-950/40">
+                            {item.success ? (
+                              <>
+                                {/* 工具栏: 视图切换 & 操作 */}
+                                <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+                                  <div className="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800">
+                                    <button
+                                      onClick={() =>
+                                        setViewModes((prev) => ({
+                                          ...prev,
+                                          [item.ticker]: 'table',
+                                        }))
+                                      }
+                                      className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition ${
+                                        viewMode === 'table'
+                                          ? 'bg-indigo-600 text-white font-medium'
+                                          : 'text-slate-400 hover:text-slate-200'
+                                      }`}
+                                    >
+                                      <TableIcon className="w-3.5 h-3.5" />
+                                      表格视图
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        setViewModes((prev) => ({
+                                          ...prev,
+                                          [item.ticker]: 'csv',
+                                        }))
+                                      }
+                                      className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition ${
+                                        viewMode === 'csv'
+                                          ? 'bg-indigo-600 text-white font-medium'
+                                          : 'text-slate-400 hover:text-slate-200'
+                                      }`}
+                                    >
+                                      <Code2 className="w-3.5 h-3.5" />
+                                      原始 CSV 代码
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        setViewModes((prev) => ({
+                                          ...prev,
+                                          [item.ticker]: 'chart',
+                                        }))
+                                      }
+                                      className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition ${
+                                        viewMode === 'chart'
+                                          ? 'bg-indigo-600 text-white font-medium'
+                                          : 'text-slate-400 hover:text-slate-200'
+                                      }`}
+                                    >
+                                      <BarChart2 className="w-3.5 h-3.5" />
+                                      走势图预览
+                                    </button>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      onClick={() => handleCopyCsv(item.ticker, item.csvText)}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition"
+                                    >
+                                      {copiedTicker === item.ticker ? (
+                                        <>
+                                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                          已复制 CSV
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Copy className="w-3.5 h-3.5" />
+                                          复制 CSV
+                                        </>
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        handleDownloadSingle(item.fileName, item.csvText)
+                                      }
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition font-medium"
+                                    >
+                                      <Download className="w-3.5 h-3.5" />
+                                      下载 {item.fileName}
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* 1. 表格视图 */}
+                                {viewMode === 'table' && (
+                                  <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950">
+                                    <table className="w-full text-left text-xs font-mono">
+                                      <thead className="bg-slate-900/90 text-slate-400 border-b border-slate-800 uppercase text-[11px]">
+                                        <tr>
+                                          <th className="py-2.5 px-4 font-semibold">
+                                            Date / Time (美东时间)
+                                          </th>
+                                          <th className="py-2.5 px-3 font-semibold">Open</th>
+                                          <th className="py-2.5 px-3 font-semibold">High</th>
+                                          <th className="py-2.5 px-3 font-semibold">Low</th>
+                                          <th className="py-2.5 px-3 font-semibold">Close</th>
+                                          <th className="py-2.5 px-3 font-semibold">Volume</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-850 text-slate-300">
+                                        {item.rows.map((r, rIdx) => {
+                                          const isUp = r.Close >= r.Open;
+                                          return (
+                                            <tr key={rIdx} className="hover:bg-slate-900/40 transition">
+                                              <td className="py-2 px-4 whitespace-nowrap text-slate-400 tabular-nums">
+                                                {r.Date}
+                                              </td>
+                                              <td className="py-2 px-3 whitespace-nowrap tabular-nums">
+                                                {r.Open.toFixed(2)}
+                                              </td>
+                                              <td className="py-2 px-3 whitespace-nowrap text-emerald-400 tabular-nums">
+                                                {r.High.toFixed(2)}
+                                              </td>
+                                              <td className="py-2 px-3 whitespace-nowrap text-rose-400 tabular-nums">
+                                                {r.Low.toFixed(2)}
+                                              </td>
+                                              <td
+                                                className={`py-2 px-3 whitespace-nowrap font-bold tabular-nums ${
+                                                  isUp ? 'text-emerald-400' : 'text-rose-400'
+                                                }`}
+                                              >
+                                                {r.Close.toFixed(2)}
+                                              </td>
+                                              <td className="py-2 px-3 whitespace-nowrap text-amber-300 tabular-nums">
+                                                {r.Volume.toLocaleString()}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+
+                                {/* 2. 原始 CSV 代码块 */}
+                                {viewMode === 'csv' && (
+                                  <div className="relative">
+                                    <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-slate-300 overflow-x-auto max-h-80 leading-relaxed selection:bg-indigo-600/30">
+                                      {item.csvText}
+                                    </pre>
+                                  </div>
+                                )}
+
+                                {/* 3. 走势图预览 */}
+                                {viewMode === 'chart' && (
+                                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
+                                    <div className="text-xs text-slate-400 mb-2 font-mono flex items-center justify-between">
+                                      <span>
+                                        {item.ticker} ({TIMEFRAMES[item.interval]?.label}) 最近{' '}
+                                        {item.rows.length} 根 K 线走势 (美东时间)
+                                      </span>
+                                      <span className="text-emerald-400">
+                                        最新收盘价: $
+                                        {item.rows[item.rows.length - 1]?.Close.toFixed(2)}
+                                      </span>
+                                    </div>
+                                    <MiniCandleChart rows={item.rows} />
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <div className="p-4 text-center text-xs text-rose-400">
+                                ⚠️ {item.error || '未获取到有效数据'}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
-                <p className="text-[11px] text-slate-400">
-                  {activeTf.description} (提取最新常用 ~{activeTf.defaultLimit} 根)
-                </p>
-              </div>
+              </section>
+            )}
 
-              {/* 联动时间跨度选择 */}
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>
-                    热门时间跨度 (Period):
-                    <span className="text-[10px] text-indigo-400 ml-1">根据维度自动联动</span>
-                  </span>
-                </label>
-                <select
-                  value={period}
-                  onChange={(e) => setPeriod(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-white focus:outline-none focus:border-indigo-500 transition shadow-inner"
-                >
-                  {activeTf.periods.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label} {opt.isPopular ? '★ 热门推荐' : ''}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[11px] text-slate-500">
-                  当前维度接口有效跨度，已过滤超限周期。
-                </p>
-              </div>
-            </div>
-
-            {/* Run Button */}
-            <div className="flex items-center justify-between pt-3 border-t border-slate-800/80">
-              <div className="text-xs text-slate-400">
-                抓取维度: <strong className="text-white">{activeTf.label}</strong> · 跨度:{' '}
-                <strong className="text-white">{period}</strong> · 导出格式:{' '}
-                <code className="text-indigo-300 font-mono">
-                  {'{ticker}'}_{selectedInterval}_kline.csv
-                </code>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 disabled:opacity-50 text-white text-sm font-semibold shadow-lg shadow-indigo-600/30 transition cursor-pointer"
-              >
-                {isLoading ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>正在抓取中...</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-4 h-4 fill-current" />
-                    <span>执行抓取任务 (Run)</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
-        </section>
-
-        {/* 运行终端日志输出 */}
-        {fetchResponse && (
-          <section className="bg-slate-950 border border-slate-800 rounded-2xl p-4 shadow-lg">
-            <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800/80 text-xs text-slate-400">
-              <span className="flex items-center gap-1.5 font-mono">
-                <Terminal className="w-3.5 h-3.5 text-indigo-400" />
-                执行日志 (Execution Output)
-              </span>
-              <span className="text-[11px] text-emerald-400 font-mono">✓ 任务完成</span>
-            </div>
-            <div className="font-mono text-xs text-slate-300 space-y-1 max-h-36 overflow-y-auto leading-relaxed">
-              {fetchResponse.logs.map((line, idx) => (
-                <div
-                  key={idx}
-                  className={
-                    line.includes('⚠️')
-                      ? 'text-amber-400'
-                      : line.includes('全部标的抓取完成')
-                      ? 'text-emerald-400 font-semibold'
-                      : 'text-slate-300'
-                  }
-                >
-                  {line}
+            {/* 首次未执行时的提示介绍 */}
+            {!fetchResponse && !isLoading && (
+              <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-8 text-center space-y-3">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-600/10 border border-indigo-600/20 text-indigo-400 flex items-center justify-center mx-auto">
+                  <FileSpreadsheet className="w-6 h-6" />
                 </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* 抓取结果汇总与折叠卡片列表 */}
-        {fetchResponse && (
-          <section className="space-y-4">
-            {/* 汇总标题栏 */}
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 border border-slate-800 px-5 py-3.5 rounded-2xl">
-              <div>
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  📊 K 线数据汇总 (维度: {TIMEFRAMES[fetchResponse.interval]?.label} · 跨度:{' '}
-                  {fetchResponse.period})
+                <h3 className="text-base font-bold text-white">
+                  输入代码并选择维度后点击「执行抓取」
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  共处理 {fetchResponse.targetTickers.length} 个标的， 成功获取{' '}
-                  <span className="text-emerald-400 font-bold font-mono">
-                    {fetchResponse.results.filter((r) => r.success).length}
-                  </span>{' '}
-                  个标的数据 · 提取各标的最新常用{' '}
-                  {TIMEFRAMES[fetchResponse.interval]?.defaultLimit} 根 K 线
+                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  可在上方搜索框搜索美股标的（如 TSM, NVDA, AAPL），选择日线、周线、1小时或5分钟维度，
+                  时间跨度将自动联动为该维度热门参数。
                 </p>
               </div>
-
-              <button
-                onClick={handleDownloadAll}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition"
-              >
-                <Download className="w-4 h-4" />
-                打包下载全部 CSV
-              </button>
-            </div>
-
-            {/* 逐个标的的折叠展示卡片 */}
-            <div className="space-y-3">
-              {fetchResponse.results.map((item) => {
-                const isExpanded = !!expandedTickers[item.ticker];
-                const viewMode = viewModes[item.ticker] || 'table';
-
-                return (
-                  <div
-                    key={item.ticker}
-                    className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg transition"
-                  >
-                    {/* 折叠头部 */}
-                    <div
-                      onClick={() => toggleExpand(item.ticker)}
-                      className="flex items-center justify-between px-5 py-3.5 cursor-pointer bg-slate-900 hover:bg-slate-850 transition select-none"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        {isExpanded ? (
-                          <ChevronDown className="w-4 h-4 text-slate-400" />
-                        ) : (
-                          <ChevronRight className="w-4 h-4 text-slate-400" />
-                        )}
-                        <span className="font-bold text-sm text-white font-mono">
-                          点击展开查看：{item.ticker}
-                        </span>
-                        {item.success ? (
-                          <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
-                            {item.rows.length} 根蜡烛 ({TIMEFRAMES[item.interval]?.shortLabel})
-                          </span>
-                        ) : (
-                          <span className="text-[11px] px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 font-mono">
-                            无有效数据
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-3 text-xs text-slate-400">
-                        <span className="font-mono text-slate-500 hidden sm:inline">
-                          {item.fileName}
-                        </span>
-                        {item.success && (
-                          <div
-                            className="flex items-center gap-1.5"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <button
-                              onClick={() => handleDownloadSingle(item.fileName, item.csvText)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition"
-                              title="下载 CSV"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleCopyCsv(item.ticker, item.csvText)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition"
-                              title="复制 CSV"
-                            >
-                              {copiedTicker === item.ticker ? (
-                                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* 展开内容 */}
-                    {isExpanded && (
-                      <div className="border-t border-slate-800 p-5 space-y-4 bg-slate-950/40">
-                        {item.success ? (
-                          <>
-                            {/* 工具栏: 视图切换 & 操作 */}
-                            <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-                              <div className="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800">
-                                <button
-                                  onClick={() =>
-                                    setViewModes((prev) => ({
-                                      ...prev,
-                                      [item.ticker]: 'table',
-                                    }))
-                                  }
-                                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition ${
-                                    viewMode === 'table'
-                                      ? 'bg-indigo-600 text-white font-medium'
-                                      : 'text-slate-400 hover:text-slate-200'
-                                  }`}
-                                >
-                                  <TableIcon className="w-3.5 h-3.5" />
-                                  表格视图
-                                </button>
-                                <button
-                                  onClick={() =>
-                                    setViewModes((prev) => ({
-                                      ...prev,
-                                      [item.ticker]: 'csv',
-                                    }))
-                                  }
-                                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition ${
-                                    viewMode === 'csv'
-                                      ? 'bg-indigo-600 text-white font-medium'
-                                      : 'text-slate-400 hover:text-slate-200'
-                                  }`}
-                                >
-                                  <Code2 className="w-3.5 h-3.5" />
-                                  原始 CSV 代码
-                                </button>
-                                <button
-                                  onClick={() =>
-                                    setViewModes((prev) => ({
-                                      ...prev,
-                                      [item.ticker]: 'chart',
-                                    }))
-                                  }
-                                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition ${
-                                    viewMode === 'chart'
-                                      ? 'bg-indigo-600 text-white font-medium'
-                                      : 'text-slate-400 hover:text-slate-200'
-                                  }`}
-                                >
-                                  <BarChart2 className="w-3.5 h-3.5" />
-                                  走势图预览
-                                </button>
-                              </div>
-
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => handleCopyCsv(item.ticker, item.csvText)}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition"
-                                >
-                                  {copiedTicker === item.ticker ? (
-                                    <>
-                                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                                      已复制 CSV
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Copy className="w-3.5 h-3.5" />
-                                      复制 CSV
-                                    </>
-                                  )}
-                                </button>
-                                <button
-                                  onClick={() =>
-                                    handleDownloadSingle(item.fileName, item.csvText)
-                                  }
-                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition font-medium"
-                                >
-                                  <Download className="w-3.5 h-3.5" />
-                                  下载 {item.fileName}
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* 1. 表格视图 */}
-                            {viewMode === 'table' && (
-                              <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950">
-                                <table className="w-full text-left text-xs font-mono">
-                                  <thead className="bg-slate-900/90 text-slate-400 border-b border-slate-800 uppercase text-[11px]">
-                                    <tr>
-                                      <th className="py-2.5 px-4 font-semibold">Date / Time</th>
-                                      <th className="py-2.5 px-3 font-semibold">Open</th>
-                                      <th className="py-2.5 px-3 font-semibold">High</th>
-                                      <th className="py-2.5 px-3 font-semibold">Low</th>
-                                      <th className="py-2.5 px-3 font-semibold">Close</th>
-                                      <th className="py-2.5 px-3 font-semibold">Volume</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-slate-850 text-slate-300">
-                                    {item.rows.map((r, rIdx) => {
-                                      const isUp = r.Close >= r.Open;
-                                      return (
-                                        <tr key={rIdx} className="hover:bg-slate-900/40 transition">
-                                          <td className="py-2 px-4 whitespace-nowrap text-slate-400 tabular-nums">
-                                            {r.Date}
-                                          </td>
-                                          <td className="py-2 px-3 whitespace-nowrap tabular-nums">
-                                            {r.Open.toFixed(2)}
-                                          </td>
-                                          <td className="py-2 px-3 whitespace-nowrap text-emerald-400 tabular-nums">
-                                            {r.High.toFixed(2)}
-                                          </td>
-                                          <td className="py-2 px-3 whitespace-nowrap text-rose-400 tabular-nums">
-                                            {r.Low.toFixed(2)}
-                                          </td>
-                                          <td
-                                            className={`py-2 px-3 whitespace-nowrap font-bold tabular-nums ${
-                                              isUp ? 'text-emerald-400' : 'text-rose-400'
-                                            }`}
-                                          >
-                                            {r.Close.toFixed(2)}
-                                          </td>
-                                          <td className="py-2 px-3 whitespace-nowrap text-amber-300 tabular-nums">
-                                            {r.Volume.toLocaleString()}
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-
-                            {/* 2. 原始 CSV 代码块 */}
-                            {viewMode === 'csv' && (
-                              <div className="relative">
-                                <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-slate-300 overflow-x-auto max-h-80 leading-relaxed selection:bg-indigo-600/30">
-                                  {item.csvText}
-                                </pre>
-                              </div>
-                            )}
-
-                            {/* 3. 走势图预览 */}
-                            {viewMode === 'chart' && (
-                              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
-                                <div className="text-xs text-slate-400 mb-2 font-mono flex items-center justify-between">
-                                  <span>
-                                    {item.ticker} ({TIMEFRAMES[item.interval]?.label}) 最近{' '}
-                                    {item.rows.length} 根 K 线走势
-                                  </span>
-                                  <span className="text-emerald-400">
-                                    最新收盘价: $
-                                    {item.rows[item.rows.length - 1]?.Close.toFixed(2)}
-                                  </span>
-                                </div>
-                                <MiniCandleChart rows={item.rows} />
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <div className="p-4 text-center text-xs text-rose-400">
-                            ⚠️ {item.error || '未获取到有效数据'}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {/* 首次未执行时的提示介绍 */}
-        {!fetchResponse && !isLoading && (
-          <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-8 text-center space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-indigo-600/10 border border-indigo-600/20 text-indigo-400 flex items-center justify-center mx-auto">
-              <FileSpreadsheet className="w-6 h-6" />
-            </div>
-            <h3 className="text-base font-bold text-white">输入代码并选择维度后点击「执行抓取」</h3>
-            <p className="text-xs text-slate-400 max-w-md mx-auto">
-              可在上方搜索框搜索美股标的（如 TSM, NVDA, AAPL），选择日线、周线、1小时或5分钟维度，
-              时间跨度将自动联动为该维度热门参数。
-            </p>
+            )}
           </div>
         )}
+
+        {/* TAB 3: 自选监控与 GitHub Action 定时抓取 */}
+        {activeTab === 'watchlist' && <WatchlistManager />}
       </main>
 
       {/* Footer */}
       <footer className="border-t border-slate-800/80 py-4 px-6 text-center text-xs text-slate-500">
-        market-kline-fetcher · 多维度行情 K 线抓取与规范导出
+        market-kline-fetcher · 多周期行情 K 线抓取与量化分析 Prompt 智能工作台
       </footer>
     </div>
   );

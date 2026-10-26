@@ -1,0 +1,29 @@
+{
+  "$schema": "./watchlist_schema.json",
+  "version": "1.0.0",
+  "schedule": {
+    "description": "美股收盘后每日定时自动抓取 (周一至周五 美东时间 16:30 / UTC 20:30)",
+    "cron": "30 20 * * 1-5",
+    "timezone": "America/New_York"
+  },
+  "timeframes": [
+    {
+      "interval": "1d",
+      "period": "3mo",
+      "label": "日线 3个月"
+    },
+    {
+      "interval": "1h",
+      "period": "1mo",
+      "label": "1小时 1个月"
+    }
+  ],
+  "tickers": [
+    "TSM",
+    "NVDA",
+    "AAPL",
+    "MU",
+    "SOXQ"
+  ],
+  "output_dir": "kline_data"
+}

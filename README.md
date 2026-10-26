@@ -19,6 +19,14 @@
   - 提取 `Date`、`Open`、`High`、`Low`、`Close`、`Volume` 标准六列。
   - 开高低收价格自动四舍五入保留 2 位小数。
   - 日线/周线输出 `YYYY-MM-DD`，分时线自动输出精确到分钟的 `YYYY-MM-DD HH:mm`。
+- 🤖 **AI 量化分析 Prompt 智能生成器 (New)**：
+  - 输入单一标的代码后，一键并行拉取：
+    - **日线 (`1d`) 3 个月 (`3mo`)**
+    - **1 小时 (`1h`) 1 个月 (`1mo`)**
+    - **5 分钟 (`5m`) 1 天 (`1d`)**（全天完整分时，从美东 09:30 开盘至 16:00 收盘）
+  - 自动与专业量化交易员（Top-tier Quantitative Prop Trader & Market Microstructure Analyst）Prompt 前缀组装。
+  - **前缀全局可配置**：支持自定义、本地持久化保存、字数/Token 估算统计，以及一键恢复系统默认。
+  - 一键复制完整 Prompt，直接粘贴给 Claude 3.5 Sonnet、ChatGPT 或 Gemini 展开微观结构与量化交易策略推演。
 - 📁 **多视图呈现与按需手动导出**：
   - **明细表格**：红绿蜡烛涨跌幅标记，等宽数字（`tabular-nums`）对齐。
   - **原始 CSV**：支持一键复制到剪贴板，方便粘贴至 Excel 或量化回测工具。
@@ -114,19 +122,56 @@ python fetch_data.py
 
 ---
 
+## 🤖 GitHub Actions 每日自动下载与自选股票配置
+
+系统包含预置的自动化 GitHub Actions 工作流（`.github/workflows/daily_kline_download.yml`），由 `watchlist_config.json` 驱动：
+
+### 1. 定时触发机制
+- **调度时间**：`cron: '30 20 * * 1-5'`（周一至周五 美东时间 16:30 收盘后，即 UTC 20:30 / 北京时间次日凌晨 04:30）。
+- **手动触发**：支持在 GitHub 仓库页面随时点击 **「Actions」→「Run workflow」** 手动立即执行。
+
+### 2. 配置文件 (`watchlist_config.json`)
+```json
+{
+  "schedule": {
+    "description": "美股收盘后每日定时自动抓取 (周一至周五 美东时间 16:30)",
+    "cron": "30 20 * * 1-5"
+  },
+  "timeframes": [
+    { "interval": "1d", "period": "3mo", "label": "日线 3个月" },
+    { "interval": "1h", "period": "1mo", "label": "1小时 1个月" }
+  ],
+  "tickers": ["TSM", "NVDA", "AAPL", "MU", "SOXQ"],
+  "output_dir": "kline_data"
+}
+```
+
+### 3. 数据产物下载
+- 每次 Action 运行完成后，数据自动保存至 `kline_data/` 并使用 `actions/upload-artifact@v4` 打包上传为构建产物（保留 30 天）。
+- 在 GitHub 仓库页面进入当次运行记录，点击 **Artifacts** 即可一键下载全套 CSV 数据压缩包。
+
+---
+
 ## 📂 项目结构
 
 ```text
+├── .github/
+│   └── workflows/
+│       └── daily_kline_download.yml # GitHub Actions 每日定时运行工作流
 ├── src/
-│   ├── App.tsx          # 交互式 K 线抓取组件 (多维度切换、热门跨度联动、搜索、图表、导出)
-│   ├── types.ts         # 数据模型与多维度接口定义 (TimeframeConfig, KlineRow)
-│   ├── main.tsx         # React 入口
-│   └── index.css        # Tailwind CSS 样式
-├── fetch_data.py        # Python 批量抓取脚本 (支持 --interval 维度 与 --period 跨度)
-├── requirements.txt     # Python 依赖清单
-├── vite.config.ts       # Vite 配置文件 (含 /api/yahoo 代理转发)
-├── package.json         # 项目依赖与 Scripts
-└── README.md            # 项目说明文档
+│   ├── App.tsx                      # 交互式主组件 (含三大模式 Tab 切换)
+│   ├── components/
+│   │   ├── PromptGenerator.tsx      # AI 量化分析 Prompt 智能生成器
+│   │   └── WatchlistManager.tsx     # 自选股监控与 GitHub Action 配置面板
+│   ├── services/
+│   │   └── klineService.ts          # 数据抓取、时区清洗与 Prompt 组装服务
+│   ├── types.ts                     # 数据模型与类型定义
+│   └── index.css                    # Tailwind CSS 样式
+├── watchlist_config.json            # 自选股列表与定时监控配置文件
+├── fetch_data.py                    # Python 批量抓取脚本 (支持 --config 读取配置)
+├── requirements.txt                 # Python 依赖清单
+├── vite.config.ts                   # Vite 配置文件 (含 /api/yahoo 代理转发)
+└── README.md                        # 项目说明文档
 ```
 
 ---
