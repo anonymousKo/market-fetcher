@@ -25,7 +25,8 @@
     "SPCX",
     "MU",
     "CRM",
-    "MSFT"
+    "MSFT",
+    "AAPL"
   ],
   "output_dir": "kline_data"
 }
