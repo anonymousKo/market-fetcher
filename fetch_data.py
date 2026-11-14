@@ -84,7 +84,7 @@ if __name__ == "__main__":
         config_data = load_config_file(config_file)
         tickers = config_data.get("tickers", ["TSM", "NVDA", "AAPL", "MU", "SOXQ"])
         timeframes = config_data.get("timeframes", [
-            {"interval": "1d", "period": "3mo", "label": "日线 3个月"},
+            {"interval": "1d", "period": "6mo", "label": "日线 6个月"},
             {"interval": "1h", "period": "1mo", "label": "1小时 1个月"}
         ])
         output_dir = config_data.get("output_dir", output_dir)
@@ -97,7 +97,7 @@ if __name__ == "__main__":
                 tasks.append({
                     "ticker": clean_t,
                     "interval": tf.get("interval", "1d"),
-                    "period": tf.get("period", "3mo"),
+                    "period": tf.get("period", "6mo"),
                     "label": tf.get("label", f"{tf.get('interval')}:{tf.get('period')}")
                 })
         print(f"✓ 配置文件加载成功，共 {len(tickers)} 个标的，{len(timeframes)} 个维度，采用按标的独立子文件夹格式存储。")
@@ -105,8 +105,8 @@ if __name__ == "__main__":
         # 命令行参数模式
         tickers_str = args.tickers.strip() if args.tickers else "TSM,NVDA,AAPL,MU,SOXQ"
         interval_str = args.interval.strip() if args.interval else "1d"
-        default_periods = {"1d": "3mo", "1wk": "1y", "1h": "1mo", "5m": "5d"}
-        period_str = args.period.strip() if args.period else default_periods.get(interval_str, "3mo")
+        default_periods = {"1d": "6mo", "1wk": "1y", "1h": "1mo", "5m": "5d"}
+        period_str = args.period.strip() if args.period else default_periods.get(interval_str, "6mo")
         target_tickers = [t.strip().upper() for t in re.split(r'[,，;\s]+', tickers_str) if t.strip()]
 
         for ticker in target_tickers:

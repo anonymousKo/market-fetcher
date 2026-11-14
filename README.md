@@ -138,7 +138,7 @@ python fetch_data.py
     "cron": "30 20 * * 1-5"
   },
   "timeframes": [
-    { "interval": "1d", "period": "3mo", "label": "日线 3个月" },
+    { "interval": "1d", "period": "6mo", "label": "日线 6个月" },
     { "interval": "1h", "period": "1mo", "label": "1小时 1个月" }
   ],
   "tickers": ["TSM", "NVDA", "AAPL", "MU", "SOXQ"],

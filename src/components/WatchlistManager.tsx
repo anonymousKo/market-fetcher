@@ -52,8 +52,8 @@ const DEFAULT_CONFIG: WatchlistConfig = {
   timeframes: [
     {
       interval: '1d',
-      period: '3mo',
-      label: '日线 3个月',
+      period: '6mo',
+      label: '日线 6个月',
       enabled: true,
     },
     {
@@ -254,7 +254,7 @@ export function WatchlistManager() {
 
   // 恢复系统默认配置
   const handleResetDefault = () => {
-    if (confirm('确认将自选股票和维度配置恢复为系统推荐默认值（日线3个月 + 1小时1个月）吗？')) {
+    if (confirm('确认将自选股票和维度配置恢复为系统推荐默认值（日线6个月 + 1小时1个月）吗？')) {
       setConfig(DEFAULT_CONFIG);
       saveToLocalStorage(DEFAULT_CONFIG);
       setSaveStatus('已恢复默认配置');
@@ -379,12 +379,12 @@ export function WatchlistManager() {
         </div>
 
 
-        {/* 1. 监控维度与周期设置 (默认: 日线 3个月 + 1小时 1个月) */}
+        {/* 1. 监控维度与周期设置 (默认: 日线 6个月 + 1小时 1个月) */}
         <div className="space-y-3 pt-1">
           <div className="flex items-center justify-between">
             <label className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
               <Layers className="w-4 h-4 text-indigo-400" />
-              <span>1. 监控维度与时间区间配置 (默认: 日线3个月 · 1小时1个月)</span>
+              <span>1. 监控维度与时间区间配置 (默认: 日线6个月 · 1小时1个月)</span>
             </label>
             <span className="text-[11px] text-slate-500">
               数据首根严格以美东 09:30 开盘时刻起算

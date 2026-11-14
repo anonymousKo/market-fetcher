@@ -10,8 +10,8 @@
   "timeframes": [
     {
       "interval": "1d",
-      "period": "3mo",
-      "label": "日线 3个月"
+      "period": "6mo",
+      "label": "日线 6个月"
     },
     {
       "interval": "1h",
