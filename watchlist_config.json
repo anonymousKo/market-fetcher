@@ -28,7 +28,8 @@
     "MSFT",
     "AAPL",
     "^N225",
-    "SOXX"
+    "SOXX",
+    "GC=F"
   ],
   "output_dir": "kline_data"
 }
