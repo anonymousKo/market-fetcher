@@ -29,7 +29,8 @@
     "AAPL",
     "^N225",
     "SOXX",
-    "GC=F"
+    "GC=F",
+    "QQQ"
   ],
   "output_dir": "kline_data"
 }
